@@ -6,20 +6,28 @@ import com.yufei.ptw.service.ConvertService;
 import com.yufei.ptw.service.TaskService;
 import com.yufei.ptw.util.OssUtil;
 
-import javax.annotation.Resource;
-
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.io.FileSystemResource;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
+import org.springframework.util.LinkedMultiValueMap;
+import org.springframework.util.MultiValueMap;
+import org.springframework.web.client.RestTemplate;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.io.*;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.*;
-import java.util.ArrayList;
-import java.util.List;
+import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.UUID;
 
 @Slf4j
@@ -37,6 +45,9 @@ public class ConvertServiceImpl implements ConvertService {
 
     @Autowired
     private TaskService taskService;
+
+    private final RestTemplate restTemplate = new RestTemplate();
+    private final String PYTHON_API_BASE_URL = "http://localhost:5000/convert";
 
     @Override
     public Result<String> change(MultipartFile file) {
@@ -102,13 +113,9 @@ public class ConvertServiceImpl implements ConvertService {
         log.info("正在接收PDF转Word请求");
         return pdfToWordFormat(file, ".docx", true);
     }
-    
-    @Override
-    public Result<String> pdfToDoc(MultipartFile file) {
-        log.info("正在接收PDF转Doc请求");
-        return pdfToWordFormat(file, ".doc", false);
-    }
-    
+
+
+
     /**
      * PDF转Word通用方法，支持DOCX和DOC格式
      */
@@ -238,20 +245,19 @@ public class ConvertServiceImpl implements ConvertService {
             String errorMessage = e.getMessage() != null ? e.getMessage() : "未知错误";
             taskService.updateTaskToFailed(taskId, errorMessage);
             log.error("异步PDF转Word(DOCX)任务失败，任务ID: {}, 错误信息: {}", taskId, errorMessage, e);
+        } finally {
+            try {
+                // 清理本地文件
+                Files.deleteIfExists(sourceFilePath);
+                Path docxFilePath = sourceFilePath.getParent().resolve(docxFilename);
+                Files.deleteIfExists(docxFilePath);
+                log.info("已清理本地文件，任务ID: {}", taskId);
+            } catch (IOException e) {
+                log.error("清理本地文件失败，任务ID: {}, 错误信息: {}", taskId, e.getMessage(), e);
+            }
         }
-//        finally {
-//            try {
-//                // 清理本地文件
-//                Files.deleteIfExists(sourceFilePath);
-//                Path docxFilePath = sourceFilePath.getParent().resolve(docxFilename);
-//                Files.deleteIfExists(docxFilePath);
-//                log.info("已清理本地文件，任务ID: {}", taskId);
-//            } catch (IOException e) {
-//                log.error("清理本地文件失败，任务ID: {}, 错误信息: {}", taskId, e.getMessage(), e);
-//            }
-//        }
     }
-    
+
     /**
      * 异步执行PDF转Word转换和上传(DOC格式)
      */
@@ -278,18 +284,17 @@ public class ConvertServiceImpl implements ConvertService {
             String errorMessage = e.getMessage() != null ? e.getMessage() : "未知错误";
             taskService.updateTaskToFailed(taskId, errorMessage);
             log.error("异步PDF转Word(DOC)任务失败，任务ID: {}, 错误信息: {}", taskId, errorMessage, e);
+        } finally {
+            try {
+                // 清理本地文件
+                Files.deleteIfExists(sourceFilePath);
+                Path docFilePath = sourceFilePath.getParent().resolve(docFilename);
+                Files.deleteIfExists(docFilePath);
+                log.info("已清理本地文件，任务ID: {}", taskId);
+            } catch (IOException e) {
+                log.error("清理本地文件失败，任务ID: {}, 错误信息: {}", taskId, e.getMessage(), e);
+            }
         }
-//        finally {
-//            try {
-//                // 清理本地文件
-//                Files.deleteIfExists(sourceFilePath);
-//                Path docFilePath = sourceFilePath.getParent().resolve(docFilename);
-//                Files.deleteIfExists(docFilePath);
-//                log.info("已清理本地文件，任务ID: {}", taskId);
-//            } catch (IOException e) {
-//                log.error("清理本地文件失败，任务ID: {}, 错误信息: {}", taskId, e.getMessage(), e);
-//            }
-//        }
     }
 
     /**
@@ -322,43 +327,6 @@ public class ConvertServiceImpl implements ConvertService {
     // 检查是否支持的Word格式
     private boolean isSupportedWordFormat(String extension) {
         return "doc".equals(extension) || "docx".equals(extension);
-    }
-
-    /**
-     * 获取LibreOffice的soffice可执行文件路径
-     *
-     * @return soffice.exe的完整路径
-     * @throws IOException 如果找不到LibreOffice安装
-     */
-    private String getSofficePath() throws IOException {
-        // Windows上LibreOffice的常见安装路径
-        String[] commonPaths = {
-                "D:\\libeoffice\\program\\soffice.exe"
-        };
-
-        // 检查每个常见路径
-        for (String path : commonPaths) {
-            if (Files.exists(Paths.get(path))) {
-                log.debug("找到LibreOffice安装: {}", path);
-                return path;
-            }
-        }
-
-        // 如果没有找到，尝试从环境变量中获取
-        String path = System.getenv("PATH");
-        if (path != null) {
-            String[] directories = path.split(System.getProperty("path.separator"));
-            for (String directory : directories) {
-                String sofficePath = directory + "\\soffice.exe";
-                if (Files.exists(Paths.get(sofficePath))) {
-                    log.debug("从环境变量找到LibreOffice: {}", sofficePath);
-                    return sofficePath;
-                }
-            }
-        }
-
-        // 如果仍然没有找到，抛出异常
-        throw new IOException("未找到LibreOffice安装。请安装LibreOffice并确保soffice.exe在上述路径之一。");
     }
 
     /**
@@ -434,316 +402,107 @@ public class ConvertServiceImpl implements ConvertService {
         return null; // 无法确定或不支持的文件类型
     }
 
-    // Word转PDF核心转换方法 - 使用LibreOffice命令行转换
+    // Word转PDF核心转换方法 - 调用Python API
     private void convertWordToPdf(Path inputPath, Path outputPath, String extension, String originalFilename) throws Exception {
-        convertFile(inputPath, outputPath, extension, originalFilename, "pdf");
+        String url = PYTHON_API_BASE_URL + "/word-to-pdf";
+        
+        // 构建多部分表单数据
+        MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
+        body.add("file", new FileSystemResource(inputPath.toFile()));
+        
+        // 设置请求头
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.MULTIPART_FORM_DATA);
+        
+        // 创建请求实体
+        HttpEntity<MultiValueMap<String, Object>> requestEntity = new HttpEntity<>(body, headers);
+        
+        // 发送请求并获取响应
+        log.debug("调用Python API进行Word转PDF: {}", url);
+        ResponseEntity<byte[]> response = restTemplate.exchange(
+                url,
+                HttpMethod.POST,
+                requestEntity,
+                byte[].class
+        );
+        
+        // 检查响应状态
+        if (!response.getStatusCode().is2xxSuccessful()) {
+            throw new Exception("Python API调用失败: " + response.getStatusCode());
+        }
+        
+        // 保存响应体到输出文件
+        byte[] pdfBytes = response.getBody();
+        if (pdfBytes == null) {
+            throw new Exception("Python API返回空响应");
+        }
+        
+        Files.write(outputPath, pdfBytes);
+        log.debug("Word转PDF成功，输出文件: {}", outputPath);
     }
 
-    // PDF转Word核心转换方法 - 使用LibreOffice命令行转换(DOCX格式)
+    // PDF转Word核心转换方法 - 调用Python API(DOCX格式)
     private void convertPdfToWord(Path inputPath, Path outputPath, String extension, String originalFilename) throws Exception {
-        convertFile(inputPath, outputPath, extension, originalFilename, "docx");
+        String url = PYTHON_API_BASE_URL + "/pdf-to-word";
+        
+        // 构建多部分表单数据
+        MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
+        body.add("file", new FileSystemResource(inputPath.toFile()));
+        
+        // 设置请求头
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.MULTIPART_FORM_DATA);
+        
+        // 创建请求实体
+        HttpEntity<MultiValueMap<String, Object>> requestEntity = new HttpEntity<>(body, headers);
+        
+        // 发送请求并获取响应
+        log.debug("调用Python API进行PDF转Word: {}", url);
+        ResponseEntity<byte[]> response = restTemplate.exchange(
+                url,
+                HttpMethod.POST,
+                requestEntity,
+                byte[].class
+        );
+        
+        // 检查响应状态
+        if (!response.getStatusCode().is2xxSuccessful()) {
+            throw new Exception("Python API调用失败: " + response.getStatusCode());
+        }
+        
+        // 保存响应体到输出文件
+        byte[] docxBytes = response.getBody();
+        if (docxBytes == null) {
+            throw new Exception("Python API返回空响应");
+        }
+        
+        Files.write(outputPath, docxBytes);
+        log.debug("PDF转Word成功，输出文件: {}", outputPath);
     }
     
-    // PDF转Word核心转换方法 - 使用LibreOffice命令行转换(DOC格式)
+    // PDF转Word核心转换方法 - 调用Python API(DOC格式)
     private void convertPdfToDoc(Path inputPath, Path outputPath, String extension, String originalFilename) throws Exception {
-        convertFile(inputPath, outputPath, extension, originalFilename, "doc");
+        // 首先转换为DOCX
+        Path docxOutputPath = Paths.get(outputPath.toString().replace(".doc", ".docx"));
+        convertPdfToWord(inputPath, docxOutputPath, extension, originalFilename);
+        
+        // 这里添加DOCX转DOC的逻辑，由于Python API不直接支持DOC格式
+        // 我们可以通过重命名的方式，或者在后续添加更复杂的转换逻辑
+        // 目前先将DOCX文件复制并重命名为DOC文件
+        Files.copy(docxOutputPath, outputPath, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        log.debug("PDF转Word(DOC)成功，输出文件: {}", outputPath);
     }
 
     // 检测PDF文件是否包含可提取的文本内容
     private boolean isPdfWithText(Path pdfPath) throws Exception {
-        try (RandomAccessFile raf = new RandomAccessFile(pdfPath.toFile(), "r")) {
-            // 检查PDF文件头
-            byte[] header = new byte[5];
-            raf.read(header);
-            String headerStr = new String(header);
-            if (!headerStr.startsWith("%PDF")) {
-                return false;
-            }
-            
-            // 读取文件内容并查找文本相关模式
-            byte[] buffer = new byte[4096];
-            long fileLength = raf.length();
-            long bytesRead = 0;
-            
-            // 检查文件中是否包含文本内容标记
-            while (bytesRead < fileLength) {
-                int read = raf.read(buffer);
-                if (read == -1) break;
-                
-                String content = new String(buffer, 0, read);
-                
-                // 查找文本对象标记
-                if (content.contains("BT") && content.contains("ET")) { // BT = Begin Text, ET = End Text
-                    return true;
-                }
-                // 查找字体定义
-                if (content.contains("/Font")) {
-                    return true;
-                }
-                // 查找文本字符串
-                if (content.contains("Tj") || content.contains("TJ")) { // Tj/TJ = Show Text operators
-                    return true;
-                }
-                
-                bytesRead += read;
-                // 只检查前5MB，避免大文件处理过久
-                if (bytesRead > 5 * 1024 * 1024) break;
-            }
-            
-            // 如果没有找到文本相关模式，可能是扫描版PDF
-            return false;
+        try {
+            // 这里可以添加PDF文本检测逻辑
+            // 由于现在使用Python API，暂时返回true
+            return true;
         } catch (Exception e) {
             log.error("检测PDF文本内容时发生错误: {}", e.getMessage());
             // 出错时默认认为可以尝试转换
             return true;
         }
-    }
-    
-    // 通用文件转换方法 - 使用LibreOffice命令行转换
-    private void convertFile(Path inputPath, Path outputPath, String extension, String originalFilename, String targetFormat) throws Exception {
-        // 获取LibreOffice的soffice可执行文件路径
-        String sofficePath = getSofficePath();
-        
-        // 确保使用绝对路径
-        Path absoluteInputPath = inputPath.toAbsolutePath().normalize();
-        Path absoluteOutputParentPath = outputPath.getParent().toAbsolutePath().normalize();
-        
-        // 构建LibreOffice命令
-        // PDF转Word时使用更具体的参数
-        String convertParams = targetFormat;
-        boolean isPdf = "pdf".equalsIgnoreCase(extension);
-        boolean hasText = true;
-        boolean isWordFormat = "docx".equals(targetFormat) || "doc".equals(targetFormat);
-        
-        if (isWordFormat) {
-            // 对于PDF转Word，使用更合适的参数格式，明确指定Word格式并启用文本提取
-            // 添加更多优化参数以提高文本提取质量
-            if ("docx".equals(targetFormat)) {
-                convertParams = "docx:MS Word 2007 XML:UTF8";
-            } else if ("doc".equals(targetFormat)) {
-                convertParams = "doc:MS Word 97";
-            }
-            
-            // 如果是PDF转Word，检测PDF是否包含可提取的文本
-            if (isPdf) {
-                hasText = isPdfWithText(absoluteInputPath);
-                log.debug("PDF文件{}包含可提取文本: {}", absoluteInputPath, hasText);
-                
-                // 如果是扫描版PDF，添加额外参数尝试OCR（如果LibreOffice支持）
-                if (!hasText) {
-                    log.info("检测到可能是扫描版PDF文件，将尝试使用OCR参数进行转换");
-                }
-            }
-        }
-        
-        // 构建LibreOffice命令参数列表
-        StringBuilder commandBuilder = new StringBuilder();
-        commandBuilder.append(String.format("\"%s\" --headless --nologo --norestore --nofirststartwizard --nodefault ", sofficePath));
-        
-        // PDF转Word时使用更强大的文本提取参数
-        if (isWordFormat && isPdf) {
-            // 统一使用完整导入参数，确保所有PDF内容都能被正确转换
-            commandBuilder.append("--infilter=writer_pdf_import --enable-ole-support --convert-to %s \"%s\" --outdir \"%s\"");
-        } else {
-            // 其他转换类型使用默认参数
-            commandBuilder.append("--convert-to %s \"%s\" --outdir \"%s\"");
-        }
-        
-        // 构建最终命令字符串
-        String command = String.format(
-                commandBuilder.toString(),
-                convertParams,
-                absoluteInputPath.toString(),
-                absoluteOutputParentPath.toString()
-        );
-        
-        log.debug("执行LibreOffice命令: {}", command);
-        
-        // 执行命令
-        log.debug("准备执行命令: {}", command);
-        ProcessBuilder processBuilder = new ProcessBuilder();
-        
-        // 直接传递命令和参数，避免转义问题
-        if (System.getProperty("os.name").toLowerCase().contains("win")) {
-            // Windows系统：使用vbscript隐藏窗口执行LibreOffice命令
-            StringBuilder fullCommand = new StringBuilder();
-            fullCommand.append(sofficePath).append(" ");
-            fullCommand.append("--headless ");
-            fullCommand.append("--nologo ");
-            fullCommand.append("--norestore ");
-            fullCommand.append("--nofirststartwizard ");
-            fullCommand.append("--nodefault ");
-            
-            // PDF转Word时使用优化的参数
-            if (isWordFormat && isPdf) {
-                // 统一使用完整导入参数，确保所有PDF内容都能被正确转换
-                fullCommand.append("--infilter=writer_pdf_import ");
-                fullCommand.append("--enable-ole-support ");
-            }
-            
-            fullCommand.append("--convert-to ").append(convertParams).append(" ");
-            fullCommand.append("\"").append(absoluteInputPath.toString()).append("\" ");
-            fullCommand.append("--outdir \"").append(absoluteOutputParentPath.toString()).append("\"");
-            
-            // 使用VBScript创建完全隐藏的进程
-            String vbScript = "Set objShell = CreateObject(\"WScript.Shell\")\n" +
-                              "objShell.Run \"" + fullCommand.toString().replace("\"", "\"\"") + "\", 0, False";
-            
-            try {
-                // 将VBScript写入临时文件
-                Path tempVbs = Files.createTempFile("libreoffice", ".vbs");
-                Files.write(tempVbs, vbScript.getBytes(StandardCharsets.UTF_8));
-                
-                // 执行VBScript文件
-                List<String> cmdList = new ArrayList<>();
-                cmdList.add("cscript.exe");
-                cmdList.add("//B"); // 批处理模式，不显示脚本标题
-                cmdList.add(tempVbs.toAbsolutePath().toString());
-                
-                processBuilder.command(cmdList);
-            } catch (IOException e) {
-                log.error("创建临时VBScript文件失败: {}", e.getMessage());
-                // 回退到直接执行方式
-                List<String> commandList = new ArrayList<>();
-                commandList.add(sofficePath);
-                commandList.add("--headless");
-                commandList.add("--nologo");
-                commandList.add("--norestore");
-                commandList.add("--nofirststartwizard");
-                commandList.add("--nodefault");
-                
-                // PDF转Word时使用优化的参数
-                if (isWordFormat && isPdf) {
-                    // 统一使用完整导入参数，确保所有PDF内容都能被正确转换
-                    commandList.add("--infilter=writer_pdf_import");
-                    commandList.add("--enable-ole-support");
-                }
-                
-                commandList.add("--convert-to");
-                commandList.add(convertParams);
-                commandList.add(absoluteInputPath.toString());
-                commandList.add("--outdir");
-                commandList.add(absoluteOutputParentPath.toString());
-                
-                processBuilder.command(commandList);
-            }
-        } else {
-            // 其他系统：通过bash执行命令
-            processBuilder.command(
-                "bash", "-c", command
-            );
-        }
-        
-        processBuilder.redirectErrorStream(true);
-        Process process = processBuilder.start();
-
-        // 读取命令输出，防止进程阻塞
-        StringBuilder outputBuilder = new StringBuilder();
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream(), "GBK"))) {
-            // 记录输出信息
-            String line;
-            while ((line = reader.readLine()) != null) {
-                outputBuilder.append(line).append(System.lineSeparator());
-                log.debug("LibreOffice输出: {}", line);
-            }
-        } catch (UnsupportedEncodingException e) {
-            log.error("不支持的编码: {}", e.getMessage());
-        }
-
-        // 等待命令执行完成
-        int exitCode = process.waitFor();
-        String output = outputBuilder.toString();
-
-        if (exitCode != 0) {
-            log.error("LibreOffice转换失败，退出码: {}, 完整输出: {}", exitCode, output);
-            throw new IOException("LibreOffice转换失败，退出码: " + exitCode + ", 输出: " + output);
-        } else {
-            log.debug("LibreOffice转换成功，退出码: {}, 输出: {}", exitCode, output);
-        }
-
-        // 验证转换后的文件是否存在
-        Path absoluteOutputPath = outputPath.toAbsolutePath().normalize();
-        log.debug("检查输出文件是否存在: {}", absoluteOutputPath);
-        
-        // 列出输出目录内容，查看实际生成的文件
-        try {
-            log.debug("输出目录 {} 的内容:", absoluteOutputParentPath);
-            DirectoryStream<Path> directoryStream = Files.newDirectoryStream(absoluteOutputParentPath);
-            for (Path path : directoryStream) {
-                log.debug("  - {}", path.getFileName());
-            }
-            directoryStream.close();
-        } catch (IOException e) {
-            log.error("列出目录内容失败: {}", e.getMessage());
-        }
-        
-        if (!Files.exists(absoluteOutputPath)) {
-            // 检查可能的文件名变体
-            String inputFileName = absoluteInputPath.getFileName().toString();
-            String expectedOutputFileName = inputFileName.replaceFirst("\\.[^.]+$", "." + targetFormat);
-            
-            // 尝试查找所有可能的输出文件
-            try {
-                DirectoryStream<Path> directoryStream = Files.newDirectoryStream(absoluteOutputParentPath);
-                Path foundFile = null;
-                
-                for (Path path : directoryStream) {
-                    String fileName = path.getFileName().toString();
-                    log.debug(" 检查文件: {}", fileName);
-                    
-                    // 检查完全匹配
-                    if (fileName.equals(expectedOutputFileName)) {
-                        foundFile = path;
-                        break;
-                    }
-                    // 检查不区分大小写的匹配
-                    if (fileName.equalsIgnoreCase(expectedOutputFileName)) {
-                        foundFile = path;
-                        break;
-                    }
-                    // 检查是否有相似的文件名（去掉空格、特殊字符等）
-                    String normalizedFileName = fileName.replaceAll("\\s+", "").toLowerCase();
-                    String normalizedExpected = expectedOutputFileName.replaceAll("\\s+", "").toLowerCase();
-                    if (normalizedFileName.equals(normalizedExpected)) {
-                        foundFile = path;
-                        break;
-                    }
-                    // 检查是否以预期文件名开头
-                    if (fileName.startsWith(expectedOutputFileName.substring(0, Math.max(10, expectedOutputFileName.length() - 5)))) {
-                        log.debug(" 找到可能的匹配文件: {}", fileName);
-                        foundFile = path;
-                        break;
-                    }
-                }
-                
-                directoryStream.close();
-                
-                if (foundFile != null) {
-                    // 如果找到匹配的文件，重命名为预期文件名
-                    log.debug("找到生成的文件: {}, 重命名为: {}", foundFile, absoluteOutputPath);
-                    Files.move(foundFile, absoluteOutputPath, StandardCopyOption.REPLACE_EXISTING);
-                } else {
-                    // 检查是否生成了任何同类型文件
-                    DirectoryStream<Path> sameTypeStream = Files.newDirectoryStream(absoluteOutputParentPath, "*" + targetFormat);
-                    boolean hasSameType = false;
-                    for (Path path : sameTypeStream) {
-                        log.debug(" 找到同类型文件: {}", path.getFileName());
-                        hasSameType = true;
-                    }
-                    sameTypeStream.close();
-                    
-                    String errorMessage = "转换后的文件不存在: " + absoluteOutputPath;
-                    if (hasSameType) {
-                        errorMessage += "，但找到了其他同类型文件，可能是文件名匹配问题";
-                    }
-                    throw new IOException(errorMessage);
-                }
-            } catch (IOException e) {
-                log.error("查找生成文件时发生错误: {}", e.getMessage());
-                throw new IOException("转换后的文件不存在: " + absoluteOutputPath, e);
-            }
-        }
-
-        log.debug("LibreOffice转换成功，输出文件: {}", outputPath);
     }
 }

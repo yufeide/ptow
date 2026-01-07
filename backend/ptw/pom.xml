@@ -54,11 +54,7 @@
             <artifactId>poi-scratchpad</artifactId>
             <version>5.2.5</version>
         </dependency>
-        <dependency>
-            <groupId>org.apache.poi</groupId>
-            <artifactId>poi-ooxml-schemas</artifactId>
-            <version>5.2.5</version>
-        </dependency>
+        
         <dependency>
             <groupId>com.itextpdf</groupId>
             <artifactId>itextpdf</artifactId>

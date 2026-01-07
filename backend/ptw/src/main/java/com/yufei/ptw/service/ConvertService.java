@@ -17,8 +17,5 @@ public interface ConvertService {
      */
     Result<String> pdfToWord(MultipartFile file);
     
-    /**
-     * PDF转Word接口 (DOC格式)
-     */
-    Result<String> pdfToDoc(MultipartFile file);
+
 }

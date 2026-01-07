@@ -43,12 +43,7 @@ public class ConvertController {
         return convertService.pdfToWord(file);
     }
     
-    @ApiOperation("PDF转Word接口 (DOC格式)")
-    @PostMapping("/pdf-to-doc")
-    public Result<String> pdfToDoc(@ApiParam(name = "file", value = "要转换的PDF文件", required = true) @RequestParam("file") MultipartFile file){
-        log.info("开始处理PDF转Word(DOC)请求");
-        return convertService.pdfToDoc(file);
-    }
+
 
     @ApiOperation("查询任务状态接口")
     @GetMapping("/task/status")
